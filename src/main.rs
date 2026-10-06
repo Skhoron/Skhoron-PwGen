@@ -51,7 +51,8 @@ fn run(cfg: &Config) -> Result<(), String> {
     let repeats = !cfg.no_repeat;
     generator::check_params(cfg.length, cfg.count, charset.len(), repeats)?;
 
-    let mut rng = rng::OsRng::new().map_err(|e| format!("нет доступа к генератору ОС: {e}"))?;
+    let mut rng = rng::SkhoronRng::new()
+        .map_err(|e| format!("не удалось получить начальную энтропию у ОС: {e}"))?;
     let passwords = (0..cfg.count)
         .map(|_| generator::generate(&mut rng, &charset, cfg.length, repeats))
         .collect::<Result<Vec<String>, String>>()?;
