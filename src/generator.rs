@@ -1,5 +1,3 @@
-//! Набор символов и генерация паролей.
-
 use crate::rng::RandomSource;
 
 pub const UPPER: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -88,14 +86,19 @@ pub fn check_params(
     Ok(())
 }
 
-/// Равномерное число в диапазоне 0..n без смещения (отбрасывание хвоста).
-pub fn gen_below<R: RandomSource>(rng: &mut R, n: u64) -> u64 {
-    assert!(n > 0, "gen_below: n должно быть больше нуля");
-    let limit = u64::MAX - (u64::MAX % n);
+/// Равномерное число в диапазоне 0..n.
+pub fn gen_below<R: RandomSource>(rng: &mut R, n: u64) -> Result<u64, String> {
+    if n == 0 {
+        return Err("gen_below: n должно быть больше нуля".to_string());
+    }
+
+    let threshold = n.wrapping_neg() % n;
     loop {
-        let x = rng.next_u64();
-        if x < limit {
-            return x % n;
+        let x = rng
+            .next_u64()
+            .map_err(|e| format!("ошибка источника случайности: {e}"))?;
+        if x >= threshold {
+            return Ok(x % n);
         }
     }
 }
@@ -111,13 +114,13 @@ pub fn generate<R: RandomSource>(
     let mut out = String::with_capacity(length);
     if repeats {
         for _ in 0..length {
-            let i = gen_below(rng, charset.len() as u64) as usize;
+            let i = gen_below(rng, charset.len() as u64)? as usize;
             out.push(charset[i]);
         }
     } else {
         let mut pool = charset.to_vec();
         for _ in 0..length {
-            let i = gen_below(rng, pool.len() as u64) as usize;
+            let i = gen_below(rng, pool.len() as u64)? as usize;
             out.push(pool.swap_remove(i));
         }
     }
@@ -143,13 +146,13 @@ mod tests {
     struct XorShift(u64);
 
     impl RandomSource for XorShift {
-        fn next_u64(&mut self) -> u64 {
+        fn next_u64(&mut self) -> std::io::Result<u64> {
             let mut x = self.0;
             x ^= x << 13;
             x ^= x >> 7;
             x ^= x << 17;
             self.0 = x;
-            x
+            Ok(x)
         }
     }
 
@@ -204,11 +207,17 @@ mod tests {
         let mut r = rng();
         let mut seen = [false; 7];
         for _ in 0..2000 {
-            let v = gen_below(&mut r, 7);
+            let v = gen_below(&mut r, 7).unwrap();
             assert!(v < 7);
             seen[v as usize] = true;
         }
         assert!(seen.iter().all(|&s| s));
+    }
+
+    #[test]
+    fn gen_below_rejects_zero() {
+        let mut r = rng();
+        assert!(gen_below(&mut r, 0).is_err());
     }
 
     #[test]
@@ -254,19 +263,35 @@ mod tests {
     struct Seq(Vec<u64>, usize);
 
     impl RandomSource for Seq {
-        fn next_u64(&mut self) -> u64 {
+        fn next_u64(&mut self) -> std::io::Result<u64> {
             let v = self.0[self.1];
             self.1 += 1;
-            v
+            Ok(v)
         }
     }
 
     #[test]
-    fn gen_below_rejects_biased_tail() {
-        // u64::MAX попадает в хвост, который не делится на 3, и должен быть отброшен
-        let mut r = Seq(vec![u64::MAX, 5], 0);
-        assert_eq!(gen_below(&mut r, 3), 2);
+    fn gen_below_rejects_rejection_threshold() {
+        let mut r = Seq(vec![0, 5], 0);
+        assert_eq!(gen_below(&mut r, 3).unwrap(), 2);
         assert_eq!(r.1, 2);
+    }
+
+    struct FailingRng;
+
+    impl RandomSource for FailingRng {
+        fn next_u64(&mut self) -> std::io::Result<u64> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "test RNG failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn random_source_errors_are_propagated() {
+        let mut r = FailingRng;
+        assert!(generate(&mut r, &['a', 'b'], 8, true).is_err());
     }
 
     #[test]
