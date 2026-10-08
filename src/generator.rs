@@ -61,7 +61,9 @@ pub fn build_charset(opts: &CharsetOptions) -> Result<Vec<char>, String> {
     }
 
     if out.is_empty() {
-        return Err("набор символов пуст: включи хотя бы один набор или убери исключения".to_string());
+        return Err(
+            "набор символов пуст: включи хотя бы один набор или убери исключения".to_string(),
+        );
     }
     Ok(out)
 }
@@ -281,10 +283,7 @@ mod tests {
 
     impl RandomSource for FailingRng {
         fn next_u64(&mut self) -> std::io::Result<u64> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "test RNG failure",
-            ))
+            Err(std::io::Error::other("test RNG failure"))
         }
     }
 
