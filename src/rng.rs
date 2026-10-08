@@ -1,23 +1,19 @@
-//! Skhoron RNG: собственный криптостойкий генератор на основе ChaCha20.
-//!
-//! Устройство:
-//! - ChaCha20 (RFC 8439) реализован здесь вручную, без внешних крейтов.
-//! - Состояние это 32-байтный ключ. Каждый блок ChaCha20 (64 байта) делится пополам:
-//!   первые 32 байта становятся новым ключом, вторые 32 байта выдаются наружу.
-//!   Старый ключ затирается сразу, поэтому по текущему состоянию нельзя восстановить
-//!   уже выданные пароли (схема fast key erasure).
-//! - Начальный ключ берётся у операционной системы (/dev/urandom, BCryptGenRandom).
-//!   Алгоритм сам энтропию создать не может, ей нужен физический источник.
-//!   Каждые 2 МиБ вывода в ключ подмешиваются свежие 32 байта от ОС.
+//! RNG на основе ChaCha20 с энтропией от ОС.
+//! Каждые 2 МиБ в состояние подмешиваются новые 32 байта от ОС.
 
 #[cfg(not(any(unix, windows)))]
 compile_error!("skhoron-pwgen поддерживает только Unix и Windows");
 
 pub trait RandomSource {
-    fn next_u64(&mut self) -> u64;
+    fn next_u64(&mut self) -> std::io::Result<u64>;
 }
 
-// ---------------------------------------------------------------- ChaCha20
+fn zeroize(buf: &mut [u8]) {
+    for byte in buf {
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
 
 fn quarter_round(s: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     s[a] = s[a].wrapping_add(s[b]);
@@ -37,7 +33,6 @@ fn quarter_round(s: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     s[b] = s[b].rotate_left(7);
 }
 
-/// Один блок ChaCha20: 64 байта потока по ключу, счётчику и nonce.
 fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
     let mut init = [0u32; 16];
     init[0] = 0x6170_7865;
@@ -74,7 +69,6 @@ fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
     out
 }
 
-// -------------------------------------------------------- Энтропия от ОС
 
 #[cfg(unix)]
 fn os_fill(buf: &mut [u8]) -> std::io::Result<()> {
@@ -107,15 +101,13 @@ fn os_fill(buf: &mut [u8]) -> std::io::Result<()> {
     if status == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::other(format!(
-            "BCryptGenRandom вернул ошибку {status}"
-        )))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("BCryptGenRandom вернул ошибку {status}"),
+        ))
     }
 }
 
-// ------------------------------------------------------------ Skhoron RNG
-
-/// Сколько блоков выдать до подмешивания свежей энтропии (65536 блоков по 32 байта = 2 МиБ).
 const RESEED_EVERY_BLOCKS: u32 = 1 << 16;
 
 pub struct SkhoronRng {
@@ -128,7 +120,10 @@ pub struct SkhoronRng {
 impl SkhoronRng {
     pub fn new() -> std::io::Result<Self> {
         let mut key = [0u8; 32];
-        os_fill(&mut key)?;
+        if let Err(e) = os_fill(&mut key) {
+            zeroize(&mut key);
+            return Err(e);
+        }
         Ok(SkhoronRng {
             key,
             buf: [0u8; 32],
@@ -137,46 +132,51 @@ impl SkhoronRng {
         })
     }
 
-    fn refill(&mut self) {
-        let block = chacha20_block(&self.key, 0, &[0u8; 12]);
+    fn refill(&mut self) -> std::io::Result<()> {
+        let mut block = chacha20_block(&self.key, 0, &[0u8; 12]);
         self.key.copy_from_slice(&block[..32]);
         self.buf.copy_from_slice(&block[32..]);
+        zeroize(&mut block);
         self.pos = 0;
         self.blocks += 1;
         if self.blocks >= RESEED_EVERY_BLOCKS {
-            self.reseed();
+            self.reseed()?;
         }
+        Ok(())
     }
 
-    fn reseed(&mut self) {
+    fn reseed(&mut self) -> std::io::Result<()> {
         let mut fresh = [0u8; 32];
-        os_fill(&mut fresh).expect("не удалось получить энтропию у ОС");
+        if let Err(e) = os_fill(&mut fresh) {
+            zeroize(&mut fresh);
+            return Err(e);
+        }
         for (k, f) in self.key.iter_mut().zip(fresh.iter()) {
             *k ^= *f;
         }
+        zeroize(&mut fresh);
         self.blocks = 0;
+        Ok(())
     }
 }
 
 impl RandomSource for SkhoronRng {
-    fn next_u64(&mut self) -> u64 {
+    fn next_u64(&mut self) -> std::io::Result<u64> {
         if self.pos >= self.buf.len() {
-            self.refill();
+            self.refill()?;
         }
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&self.buf[self.pos..self.pos + 8]);
-        self.buf[self.pos..self.pos + 8].fill(0);
+        zeroize(&mut self.buf[self.pos..self.pos + 8]);
         self.pos += 8;
-        u64::from_le_bytes(bytes)
+        Ok(u64::from_le_bytes(bytes))
     }
 }
 
 impl Drop for SkhoronRng {
     fn drop(&mut self) {
-        self.key = [0u8; 32];
-        self.buf = [0u8; 32];
-        std::hint::black_box(&self.key);
-        std::hint::black_box(&self.buf);
+        zeroize(&mut self.key);
+        zeroize(&mut self.buf);
     }
 }
 
@@ -221,7 +221,7 @@ mod tests {
         let mut rng = SkhoronRng::new().unwrap();
         let mut seen = std::collections::HashSet::new();
         for _ in 0..1000 {
-            assert!(seen.insert(rng.next_u64()));
+            assert!(seen.insert(rng.next_u64().unwrap()));
         }
     }
 
@@ -229,7 +229,7 @@ mod tests {
     fn key_is_replaced_after_every_block() {
         let mut rng = SkhoronRng::new().unwrap();
         let before = rng.key;
-        rng.next_u64();
+        rng.next_u64().unwrap();
         assert_ne!(before, rng.key);
     }
 
@@ -238,7 +238,7 @@ mod tests {
         let mut rng = SkhoronRng::new().unwrap();
         rng.blocks = RESEED_EVERY_BLOCKS - 1;
         for _ in 0..8 {
-            rng.next_u64();
+            rng.next_u64().unwrap();
         }
         assert!(rng.blocks < RESEED_EVERY_BLOCKS);
     }
@@ -247,7 +247,9 @@ mod tests {
     fn bits_are_balanced() {
         let mut rng = SkhoronRng::new().unwrap();
         let n = 100_000u64;
-        let ones: u64 = (0..n).map(|_| rng.next_u64().count_ones() as u64).sum();
+        let ones: u64 = (0..n)
+            .map(|_| rng.next_u64().unwrap().count_ones() as u64)
+            .sum();
         let expected = n * 32;
         // сигма ≈ sqrt(n*64)/2 ≈ 1265, допуск около 8 сигм
         assert!(ones.abs_diff(expected) < 10_000, "ones = {ones}");
