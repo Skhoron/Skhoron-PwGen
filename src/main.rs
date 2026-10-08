@@ -53,72 +53,102 @@ fn run(cfg: &Config) -> Result<(), String> {
 
     let mut rng = rng::SkhoronRng::new()
         .map_err(|e| format!("не удалось получить начальную энтропию у ОС: {e}"))?;
-    let passwords = (0..cfg.count)
-        .map(|_| generator::generate(&mut rng, &charset, cfg.length, repeats))
-        .collect::<Result<Vec<String>, String>>()?;
     let bits = generator::entropy_bits(charset.len(), cfg.length, repeats);
 
-    if cfg.json {
-        println!(
-            "{}",
-            to_json(&passwords, cfg.length, charset.len(), repeats, bits)
-        );
-    } else if cfg.quiet {
-        for p in &passwords {
-            println!("{p}");
-        }
-        if cfg.entropy {
-            eprintln!("Энтропия: {bits:.1} бит");
-        }
+    let mut clipboard_text = if cfg.clipboard {
+        Some(String::with_capacity(
+            cfg.count.saturating_mul(cfg.length.saturating_add(1)),
+        ))
     } else {
-        println!("{}", if passwords.len() == 1 { "Пароль:" } else { "Пароли:" });
-        for p in &passwords {
-            println!("{p}");
+        None
+    };
+
+    if cfg.json {
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        write!(output, "{{\"passwords\":[").map_err(|e| e.to_string())?;
+        for index in 0..cfg.count {
+            let password = generator::generate(&mut rng, &charset, cfg.length, repeats)?;
+            if index != 0 {
+                write!(output, ",").map_err(|e| e.to_string())?;
+            }
+            write_json_string(&mut output, &password)?;
+            append_clipboard(&mut clipboard_text, &password);
+            zeroize_string(password);
         }
+        writeln!(
+            output,
+            "],\"length\":{},\"charset_size\":{},\"repeats\":{},\"entropy_bits\":{:.2}}}",
+            cfg.length, charset.len(), repeats, bits
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        if !cfg.quiet {
+            println!(
+                "{}",
+                if cfg.count == 1 { "Пароль:" } else { "Пароли:" }
+            );
+        }
+
+        for _ in 0..cfg.count {
+            let password = generator::generate(&mut rng, &charset, cfg.length, repeats)?;
+            println!("{password}");
+            append_clipboard(&mut clipboard_text, &password);
+            zeroize_string(password);
+        }
+
         if cfg.entropy {
-            println!("\nЭнтропия: {bits:.1} бит");
+            if cfg.quiet {
+                eprintln!("Энтропия: {bits:.1} бит");
+            } else {
+                println!("\nЭнтропия: {bits:.1} бит");
+            }
         }
     }
 
-    if cfg.clipboard {
-        match copy_to_clipboard(&passwords.join("\n")) {
-            Ok(()) => {
-                if !cfg.quiet {
-                    eprintln!("Скопировано в буфер обмена.");
-                }
-            }
-            Err(e) => eprintln!("Буфер обмена: {e}"),
+    if let Some(text) = clipboard_text {
+        let result = copy_to_clipboard(&text);
+        zeroize_string(text);
+        result?;
+        if !cfg.quiet {
+            eprintln!("Скопировано в буфер обмена.");
         }
     }
+
     Ok(())
 }
 
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
+fn append_clipboard(clipboard: &mut Option<String>, password: &str) {
+    if let Some(text) = clipboard {
+        if !text.is_empty() {
+            text.push('\n');
         }
+        text.push_str(password);
     }
-    out
 }
 
-fn to_json(passwords: &[String], length: usize, charset_len: usize, repeats: bool, bits: f64) -> String {
-    let items: Vec<String> = passwords
-        .iter()
-        .map(|p| format!("\"{}\"", json_escape(p)))
-        .collect();
-    format!(
-        "{{\"passwords\":[{}],\"length\":{},\"charset_size\":{},\"repeats\":{},\"entropy_bits\":{:.2}}}",
-        items.join(","),
-        length,
-        charset_len,
-        repeats,
-        bits
-    )
+fn zeroize_string(value: String) {
+    let mut bytes = value.into_bytes();
+    for byte in &mut bytes {
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
+fn write_json_string<W: Write>(out: &mut W, value: &str) -> Result<(), String> {
+    write!(out, "\"").map_err(|e| e.to_string())?;
+    for c in value.chars() {
+        match c {
+            '"' => write!(out, "\\\"").map_err(|e| e.to_string())?,
+            '\\' => write!(out, "\\\\").map_err(|e| e.to_string())?,
+            c if (c as u32) < 0x20 => {
+                write!(out, "\\u{:04x}", c as u32).map_err(|e| e.to_string())?
+            }
+            c => write!(out, "{c}").map_err(|e| e.to_string())?,
+        }
+    }
+    write!(out, "\"").map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn clipboard_commands() -> Vec<(&'static str, Vec<&'static str>)> {
@@ -250,12 +280,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_escapes_special_chars() {
-        assert_eq!(json_escape("a\"b\\c"), "a\\\"b\\\\c");
-        assert_eq!(json_escape("\n"), "\\u000a");
-    }
-
-    #[test]
     fn yes_no_parsing() {
         assert_eq!(parse_yes_no(""), Some(true));
         assert_eq!(parse_yes_no("Y"), Some(true));
@@ -266,11 +290,9 @@ mod tests {
     }
 
     #[test]
-    fn json_shape() {
-        let s = to_json(&["ab".to_string(), "cd".to_string()], 2, 70, true, 12.25);
-        assert_eq!(
-            s,
-            "{\"passwords\":[\"ab\",\"cd\"],\"length\":2,\"charset_size\":70,\"repeats\":true,\"entropy_bits\":12.25}"
-        );
+    fn json_string_escapes_special_chars() {
+        let mut out = Vec::new();
+        write_json_string(&mut out, "a\"b\\c\n").unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\"a\\\"b\\\\c\\u000a\"");
     }
 }
