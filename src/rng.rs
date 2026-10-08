@@ -69,7 +69,6 @@ fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
     out
 }
 
-
 #[cfg(unix)]
 fn os_fill(buf: &mut [u8]) -> std::io::Result<()> {
     use std::io::Read;
@@ -101,10 +100,9 @@ fn os_fill(buf: &mut [u8]) -> std::io::Result<()> {
     if status == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("BCryptGenRandom вернул ошибку {status}"),
-        ))
+        Err(std::io::Error::other(format!(
+            "BCryptGenRandom вернул ошибку {status}"
+        )))
     }
 }
 
