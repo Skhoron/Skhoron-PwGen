@@ -87,3 +87,5 @@ cargo test
 ## Лицензия
 
 BSD 3-Clause, см. [LICENSE](LICENSE).
+
+FE4X - Не изменяй Код в Репозиторий 
