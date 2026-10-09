@@ -34,6 +34,7 @@ impl Default for CharsetOptions {
 
 pub fn build_charset(opts: &CharsetOptions) -> Result<Vec<char>, String> {
     let mut all = String::new();
+
     if opts.upper {
         all.push_str(UPPER);
     }
@@ -48,6 +49,7 @@ pub fn build_charset(opts: &CharsetOptions) -> Result<Vec<char>, String> {
     }
 
     let mut out: Vec<char> = Vec::new();
+
     for c in all.chars() {
         if opts.no_similar && SIMILAR.contains(c) {
             continue;
@@ -65,6 +67,7 @@ pub fn build_charset(opts: &CharsetOptions) -> Result<Vec<char>, String> {
             "набор символов пуст: включи хотя бы один набор или убери исключения".to_string(),
         );
     }
+
     Ok(out)
 }
 
@@ -85,6 +88,7 @@ pub fn check_params(
             "без повторов длина не может превышать размер набора: в наборе {charset_len} символов, запрошено {length}"
         ));
     }
+
     Ok(())
 }
 
@@ -95,10 +99,12 @@ pub fn gen_below<R: RandomSource>(rng: &mut R, n: u64) -> Result<u64, String> {
     }
 
     let threshold = n.wrapping_neg() % n;
+
     loop {
         let x = rng
             .next_u64()
             .map_err(|e| format!("ошибка источника случайности: {e}"))?;
+
         if x >= threshold {
             return Ok(x % n);
         }
@@ -114,6 +120,7 @@ pub fn generate<R: RandomSource>(
     check_params(length, 1, charset.len(), repeats)?;
 
     let mut out = String::with_capacity(length);
+
     if repeats {
         for _ in 0..length {
             let i = gen_below(rng, charset.len() as u64)? as usize;
@@ -121,11 +128,13 @@ pub fn generate<R: RandomSource>(
         }
     } else {
         let mut pool = charset.to_vec();
+
         for _ in 0..length {
             let i = gen_below(rng, pool.len() as u64)? as usize;
             out.push(pool.swap_remove(i));
         }
     }
+
     Ok(out)
 }
 
@@ -176,6 +185,7 @@ mod tests {
         };
         let cs = build_charset(&opts).unwrap();
         assert_eq!(cs.len(), 65);
+
         for c in SIMILAR.chars() {
             assert!(!cs.contains(&c));
         }
@@ -208,11 +218,13 @@ mod tests {
     fn gen_below_stays_in_range_and_covers_all_values() {
         let mut r = rng();
         let mut seen = [false; 7];
+
         for _ in 0..2000 {
             let v = gen_below(&mut r, 7).unwrap();
             assert!(v < 7);
             seen[v as usize] = true;
         }
+
         assert!(seen.iter().all(|&s| s));
     }
 
@@ -226,6 +238,7 @@ mod tests {
     fn with_repeats_has_right_length_and_alphabet() {
         let cs = build_charset(&CharsetOptions::default()).unwrap();
         let pw = generate(&mut rng(), &cs, 200, true).unwrap();
+
         assert_eq!(pw.chars().count(), 200);
         assert!(pw.chars().all(|c| cs.contains(&c)));
     }
@@ -235,6 +248,7 @@ mod tests {
         let cs = build_charset(&CharsetOptions::default()).unwrap();
         let pw = generate(&mut rng(), &cs, 50, false).unwrap();
         let unique: HashSet<char> = pw.chars().collect();
+
         assert_eq!(pw.chars().count(), 50);
         assert_eq!(unique.len(), 50);
     }
@@ -244,6 +258,7 @@ mod tests {
         let cs = vec!['a', 'b', 'c'];
         let pw = generate(&mut rng(), &cs, 3, false).unwrap();
         let mut chars: Vec<char> = pw.chars().collect();
+
         chars.sort();
         assert_eq!(chars, cs);
     }
@@ -251,6 +266,7 @@ mod tests {
     #[test]
     fn no_repeat_longer_than_charset_is_error() {
         let cs = vec!['a', 'b', 'c'];
+
         assert!(generate(&mut rng(), &cs, 4, false).is_err());
         assert!(generate(&mut rng(), &cs, 4, true).is_ok());
     }
@@ -258,6 +274,7 @@ mod tests {
     #[test]
     fn zero_and_huge_length_are_errors() {
         let cs = vec!['a', 'b'];
+
         assert!(generate(&mut rng(), &cs, 0, true).is_err());
         assert!(generate(&mut rng(), &cs, MAX_LENGTH + 1, true).is_err());
     }
@@ -275,6 +292,7 @@ mod tests {
     #[test]
     fn gen_below_rejects_rejection_threshold() {
         let mut r = Seq(vec![0, 5], 0);
+
         assert_eq!(gen_below(&mut r, 3).unwrap(), 2);
         assert_eq!(r.1, 2);
     }
