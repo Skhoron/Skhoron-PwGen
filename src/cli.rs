@@ -230,7 +230,14 @@ mod tests {
 
     #[test]
     fn boolean_flags() {
-        let c = run(&["--no-repeat", "--no-similar", "--entropy", "--json", "-q", "--clipboard"]);
+        let c = run(&[
+            "--no-repeat",
+            "--no-similar",
+            "--entropy",
+            "--json",
+            "-q",
+            "--clipboard",
+        ]);
         assert!(c.no_repeat);
         assert!(c.charset.no_similar);
         assert!(c.entropy);
