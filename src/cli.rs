@@ -259,4 +259,3 @@ mod tests {
         assert!(parse(&a(&["--length", "-5"])).is_err());
         assert!(parse(&a(&["--json=1"])).is_err());
     }
-}
