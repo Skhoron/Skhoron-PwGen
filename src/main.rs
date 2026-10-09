@@ -67,6 +67,7 @@ fn run(cfg: &Config) -> Result<(), String> {
         let stdout = io::stdout();
         let mut output = stdout.lock();
         write!(output, "{{\"passwords\":[").map_err(|e| e.to_string())?;
+
         for index in 0..cfg.count {
             let password = generator::generate(&mut rng, &charset, cfg.length, repeats)?;
             if index != 0 {
@@ -76,17 +77,25 @@ fn run(cfg: &Config) -> Result<(), String> {
             append_clipboard(&mut clipboard_text, &password);
             zeroize_string(password);
         }
+
         writeln!(
             output,
             "],\"length\":{},\"charset_size\":{},\"repeats\":{},\"entropy_bits\":{:.2}}}",
-            cfg.length, charset.len(), repeats, bits
+            cfg.length,
+            charset.len(),
+            repeats,
+            bits
         )
         .map_err(|e| e.to_string())?;
     } else {
         if !cfg.quiet {
             println!(
                 "{}",
-                if cfg.count == 1 { "Пароль:" } else { "Пароли:" }
+                if cfg.count == 1 {
+                    "Пароль:"
+                } else {
+                    "Пароли:"
+                }
             );
         }
 
@@ -173,36 +182,47 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
+
         let mut child = match spawned {
             Ok(c) => c,
             Err(_) => continue,
         };
+
         let written = match child.stdin.take() {
             Some(mut stdin) => stdin.write_all(text.as_bytes()).is_ok(),
             None => false,
         };
+
         let status = match child.wait() {
             Ok(s) => s,
             Err(_) => continue,
         };
+
         if written && status.success() {
             return Ok(());
         }
     }
-    Err("не найдена утилита буфера обмена (pbcopy, clip, wl-copy, xclip или xsel)".to_string())
+
+    Err(
+        "не найдена утилита буфера обмена (pbcopy, clip, wl-copy, xclip или xsel)"
+            .to_string(),
+    )
 }
 
 fn read_line(prompt: &str) -> Result<String, String> {
     print!("{prompt}");
     io::stdout().flush().map_err(|e| e.to_string())?;
+
     let mut s = String::new();
     let n = io::stdin()
         .lock()
         .read_line(&mut s)
         .map_err(|e| e.to_string())?;
+
     if n == 0 {
         return Err("ввод закрыт".to_string());
     }
+
     Ok(s.trim().to_string())
 }
 
@@ -212,6 +232,7 @@ fn ask_number(prompt: &str, default: usize) -> Result<usize, String> {
         if s.is_empty() {
             return Ok(default);
         }
+
         match s.parse::<usize>() {
             Ok(n) => return Ok(n),
             Err(_) => println!("Нужно целое число."),
@@ -244,12 +265,14 @@ fn interactive() -> Result<Config, String> {
 
     let length = ask_number("Длина", 24)?;
     println!();
+
     let upper = ask_yes("A-Z")?;
     let lower = ask_yes("a-z")?;
     let digits = ask_yes("0-9")?;
     let symbols = ask_yes("!@#$%^&*")?;
 
     println!("\nПовторения:\n[1] Разрешены\n[2] Запрещены");
+
     let mode = loop {
         let m = ask_number("Выбор", 1)?;
         if m == 1 || m == 2 {
@@ -257,6 +280,7 @@ fn interactive() -> Result<Config, String> {
         }
         println!("Введи 1 или 2.");
     };
+
     let count = ask_number("Количество", 1)?;
     println!();
 
