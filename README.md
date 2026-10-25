@@ -1,4 +1,4 @@
-.# Skhoron-PwGen
+# Skhoron-PwGen
 
 A command-line password generator written in Rust. No external dependencies, a single binary.
 Random numbers are provided by the custom Skhoron RNG generator based on ChaCha20 (see below).
