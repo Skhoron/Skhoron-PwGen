@@ -1,33 +1,28 @@
-# Skhoron-PwGen
+.# Skhoron-PwGen
 
-Консольный генератор паролей на Rust. Без внешних зависимостей, один бинарник.
-Случайные числа даёт собственный генератор Skhoron RNG на ChaCha20 (см. ниже).
-Пароли никуда не сохраняются.
+A command-line password generator written in Rust. No external dependencies, a single binary.
+Random numbers are provided by the custom Skhoron RNG generator based on ChaCha20 (see below).
+Passwords are not saved anywhere.
 
-## Сборка
+Building
 
-```
 cargo build --release
 ./target/release/skhoron-pwgen
-```
 
-## Интерактивный режим
+Interactive mode
 
-Запуск без аргументов спрашивает длину, наборы символов, режим повторений и количество:
+Running without arguments prompts for the length, character sets, repetition mode, and quantity:
 
-```
 $ skhoron-pwgen
 
 ╔══════════════════════════╗
 ║      Skhoron-PwGen       ║
 ╚══════════════════════════╝
 
-Длина [24]:
-```
+Length [24]:
 
-## Аргументы
+Arguments
 
-```
 skhoron-pwgen --length 32
 skhoron-pwgen --length 32 --no-repeat
 skhoron-pwgen --length 24 --upper --lower --digits --symbols
@@ -35,58 +30,55 @@ skhoron-pwgen --length 20 --count 10
 skhoron-pwgen --length 16 --no-similar --exclude "{}[]"
 skhoron-pwgen -l 20 -q --clipboard
 skhoron-pwgen -l 20 --json --entropy
-```
 
-| Параметр | Что делает |
-|---|---|
-| `-l, --length N` | длина, по умолчанию 24, максимум 4096 |
-| `-c, --count N` | сколько паролей, по умолчанию 1, максимум 10000 |
-| `--upper --lower --digits --symbols` | наборы `A-Z`, `a-z`, `0-9`, `!@#$%^&*`; без указания берутся все |
-| `--no-repeat` | символы не повторяются |
-| `--no-similar` | убирает `0 O 1 l I` |
-| `--exclude STR` | убирает все символы из `STR` |
-| `--entropy` | энтропия в битах |
-| `--clipboard` | копирует в буфер через `pbcopy`, `clip`, `wl-copy`, `xclip` или `xsel` |
-| `-q, --quiet` | только пароли, по одному в строке |
-| `--json` | вывод в JSON, энтропия включена |
+Option| What it does
+"-l, --length N"| length, default 24, maximum 4096
+"-c, --count N"| number of passwords, default 1, maximum 10000
+"--upper --lower --digits --symbols"| character sets "A-Z", "a-z", "0-9", "!@#$%^&*"; all are used by default if none are specified
+"--no-repeat"| characters are not repeated
+"--no-similar"| excludes "0 O 1 l I"
+"--exclude STR"| excludes all characters from "STR"
+"--entropy"| entropy in bits
+"--clipboard"| copies to the clipboard using "pbcopy", "clip", "wl-copy", "xclip", or "xsel"
+"-q, --quiet"| passwords only, one per line
+"--json"| JSON output, including entropy
 
-С `--no-repeat` длина не может быть больше числа символов в наборе (70 со всеми наборами, 65 с `--no-similar`).
-В этом режиме выбор идёт как вытягивание без возвращения, поэтому энтропия считается как `log2(n·(n-1)·…)`, а не `длина·log2(n)`.
+With "--no-repeat", the length cannot exceed the number of characters in the character set (70 with all sets, 65 with "--no-similar").
+In this mode, selection works like drawing without replacement, so entropy is calculated as "log2(n·(n-1)·…)", rather than "length·log2(n)".
 
-Код возврата: 0 успех, 1 ошибка выполнения, 2 неверные аргументы.
+Exit codes: 0 for success, 1 for runtime error, 2 for invalid arguments.
 
-## Skhoron RNG
+Skhoron RNG
 
-Генератор в `src/rng.rs` написан в проекте с нуля, внешних крейтов нет:
+The generator in "src/rng.rs" was written from scratch within the project, with no external crates:
 
-- ChaCha20 по RFC 8439, проверен тестовыми векторами из RFC (раздел 2.3.2 и приложение A.1).
-- Состояние это 32-байтный ключ. Каждый блок ChaCha20 делится пополам: первые 32 байта становятся новым ключом, вторые выдаются наружу, старый ключ затирается. По состоянию нельзя восстановить уже выданные пароли.
-- Начальный ключ берётся у ОС (`/dev/urandom` на Linux и macOS, `BCryptGenRandom` на Windows). Одним алгоритмом энтропию получить нельзя, ей нужен физический источник, а ОС собирает её из прерываний, таймингов и аппаратного ГСЧ процессора.
-- Каждые 2 МиБ вывода в ключ подмешиваются свежие 32 байта от ОС.
+- ChaCha20 according to RFC 8439, verified against test vectors from the RFC (Section 2.3.2 and Appendix A.1).
+- The state is a 32-byte key. Each ChaCha20 block is split in half: the first 32 bytes become the new key, and the second half is returned; the old key is overwritten. Previously generated passwords cannot be recovered from the state.
+- The initial key is obtained from the OS ("/dev/urandom" on Linux and macOS, "BCryptGenRandom" on Windows). Entropy cannot be obtained from an algorithm alone; it requires a physical source, and the OS collects it from interrupts, timings, and the processor's hardware RNG.
+- Every 2 MiB of output, a fresh 32 bytes from the OS are mixed into the key.
 
-Сам шифр не изобретался: используется ChaCha20 по RFC 8439. Конструкция RNG поверх него является собственной и не является стандартным CSPRNG.
+The cipher itself was not invented: ChaCha20 according to RFC 8439 is used. The RNG construction built on top of it is custom and is not a standard CSPRNG.
 
-## Что учесть
+Things to consider
 
-- Выбор символов без смещения: значения из генератора ОС отбрасываются, если попадают в хвост диапазона, не кратный размеру набора.
-- Временные строки сгенерированных паролей обнуляются после использования. Копии, уже переданные терминалу или буферу обмена, это не очищает.
-- `--clipboard` кладёт пароль в буфер обмена. История буфера и менеджеры буфера могут его сохранить.
-- Пароль, напечатанный в терминал, остаётся в прокрутке терминала. В скриптах используй `-q` и передавай результат по конвейеру.
-- Если ОС не отдаёт начальную энтропию (например, `/dev/urandom` недоступен в урезанном chroot), программа завершится с ошибкой, а не подставит что-то слабое.
+- Character selection is unbiased: values from the OS generator are discarded if they fall within the tail of the range that is not divisible by the size of the character set.
+- Temporary strings containing generated passwords are zeroed after use. Copies already passed to the terminal or clipboard are not cleared.
+- "--clipboard" puts the password in the clipboard. Clipboard history and clipboard managers may save it.
+- A password printed to the terminal remains in the terminal scrollback. In scripts, use "-q" and pass the result through a pipeline.
+- If the OS cannot provide initial entropy (for example, if "/dev/urandom" is unavailable in a restricted chroot), the program exits with an error rather than substituting something weak.
 
-## Разработка
+Development
 
-```
 cargo fmt
 cargo clippy --all-targets -- -D warnings
 cargo test
-```
 
-`cargo audit` в CI не нужен: зависимостей нет, проверять нечего.
+"cargo audit" is not needed in CI: there are no dependencies to audit.
 
-## Лицензия
+License
 
-BSD 3-Clause, см. [LICENSE](LICENSE).
+BSD 3-Clause, see "LICENSE" (LICENSE).
 
-## Коментарий
-FE4X - Не изменяй Код в Репозиторий 
+Comment
+
+FE4X - Do not modify the code in the repository
